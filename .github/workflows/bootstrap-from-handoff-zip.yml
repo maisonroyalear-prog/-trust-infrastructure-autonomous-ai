@@ -101,20 +101,34 @@ jobs:
       - name: Verify Git diff integrity
         run: git diff --check
 
-      - name: Commit verified repository baseline
+      -       - name: Commit verified repository baseline
         id: commit
         shell: bash
         run: |
           set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-                   git add -A -- . ':(exclude).github/workflows/**'
+
+          git restore .github/workflows 2>/dev/null || true
+          git clean -fd .github/workflows
+
+          grep -qxF '*.tsbuildinfo' .gitignore || echo '*.tsbuildinfo' >> .gitignore
+          find . -name '*.tsbuildinfo' -type f -delete
+
+          git add -A
+          git restore --staged .github/workflows 2>/dev/null || true
+
+          git diff --check
+
           if git diff --cached --quiet; then
             echo "No repository changes to commit." >&2
             exit 1
           fi
+
           git commit -m "chore(m0): bootstrap verified RI-01 baseline"
           git push
+
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Dispatch normal read-only CI from committed lockfile

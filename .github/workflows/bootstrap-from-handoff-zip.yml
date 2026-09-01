@@ -61,7 +61,10 @@ jobs:
 
       - name: Clean install from generated lockfile
         run: npm ci
-
+        
+      - name: Normalize repository formatting
+        run: npm run format
+        
       - name: Run full M0 STEP-01 verification
         run: npm run ci:local
 

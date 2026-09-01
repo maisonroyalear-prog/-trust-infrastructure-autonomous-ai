@@ -1,0 +1,114 @@
+name: bootstrap-from-handoff-zip-v2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Locate and verify handoff ZIP by SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="b488930e9f135dad0c7c94ef047ddbc5177acd8bf58d606776deddd11e61df37"
+          ZIP_PATH=""
+          while IFS= read -r -d '' candidate; do
+            actual="$(sha256sum "$candidate" | awk '{print $1}')"
+            if [ "$actual" = "$EXPECTED_SHA" ]; then
+              if [ -n "$ZIP_PATH" ]; then
+                echo "More than one handoff ZIP matches the expected checksum." >&2
+                exit 1
+              fi
+              ZIP_PATH="$candidate"
+            fi
+          done < <(find . -maxdepth 1 -type f -name 'RI-01-M0-STEP-01B-*.zip' -print0)
+          test -n "$ZIP_PATH"
+          echo "Verified handoff: $ZIP_PATH"
+          echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
+
+      - name: Expand repository handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .bootstrap
+          mkdir .bootstrap
+          unzip -q "$ZIP_PATH" -d .bootstrap
+          test -f .bootstrap/trust-infrastructure-ri01-m0/package.json
+          rsync -a .bootstrap/trust-infrastructure-ri01-m0/ ./
+          rm -rf .bootstrap "$ZIP_PATH"
+          rm -f .github/workflows/bootstrap-from-handoff-zip.yml
+          rm -f .github/workflows/RI-01-bootstrap-from-handoff-zip-v2.yml
+
+      - name: Setup locked Node runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify locked toolchain
+        run: npm run toolchain:check
+
+      - name: Generate genuine npm lockfile
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Clean install from generated lockfile
+        run: npm ci
+
+      - name: Run full M0 STEP-01 verification
+        run: npm run ci:local
+
+      - name: Verify Git diff integrity
+        run: git diff --check
+
+      - name: Commit verified repository baseline
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No repository changes to commit." >&2
+            exit 1
+          fi
+          git commit -m "chore(m0): bootstrap verified RI-01 baseline"
+          git push
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch normal read-only CI from committed lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --ref "$GITHUB_REF_NAME"
+
+          RUN_ID=""
+          for attempt in {1..30}; do
+            RUN_ID="$(gh run list \
+              --workflow ci.yml \
+              --branch "$GITHUB_REF_NAME" \
+              --event workflow_dispatch \
+              --commit "$COMMIT_SHA" \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')"
+            if [ -n "$RUN_ID" ]; then
+              break
+            fi
+            sleep 2
+          done
+
+          test -n "$RUN_ID"
+          echo "Normal CI run: $RUN_ID"
+          gh run watch "$RUN_ID" --exit-status

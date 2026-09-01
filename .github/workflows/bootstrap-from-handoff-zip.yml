@@ -61,10 +61,40 @@ jobs:
 
       - name: Clean install from generated lockfile
         run: npm ci
-        
+
+      - name: Write M0 ESLint config without project service
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > eslint.config.mjs <<'EOF'
+          import tseslint from 'typescript-eslint';
+
+          export default tseslint.config(
+            {
+              ignores: ['**/dist/**', '**/node_modules/**', 'coverage/**'],
+            },
+            {
+              files: ['**/*.{js,mjs,cjs}'],
+              rules: {
+                'no-eval': 'error',
+                'no-implied-eval': 'error',
+              },
+            },
+            {
+              files: ['**/*.ts'],
+              extends: [tseslint.configs.recommended],
+              rules: {
+                '@typescript-eslint/no-explicit-any': 'error',
+                'no-eval': 'error',
+                'no-implied-eval': 'error',
+              },
+            },
+          );
+          EOF
+
       - name: Normalize repository formatting
         run: npm run format
-        
+
       - name: Run full M0 STEP-01 verification
         run: npm run ci:local
 

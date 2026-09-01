@@ -1,4 +1,4 @@
-عname: bootstrap-from-handoff-zip-v2
+name: bootstrap-from-handoff-zip-v2
 
 on:
   workflow_dispatch:
